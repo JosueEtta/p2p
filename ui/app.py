@@ -169,7 +169,8 @@ class App:
                 self.progress_text.set("Download failed")
                 self.status.set(f"Download failed: {err}")
             else:
-                self._set_progress(1, 1, "Download complete")
+                self.progress["value"] = 100
+                self.progress_text.set("Download complete")
                 self.status.set(f"Saved to {path}")
         self._bg(lambda: client.download(ip, port, fname, self.folder, report), done)
 
@@ -204,6 +205,7 @@ class App:
                 self.progress_text.set("Upload failed")
                 self.status.set(f"Upload failed: {err}")
             else:
-                self._set_progress(total, total, "Upload complete")
+                self.progress["value"] = 100
+                self.progress_text.set("Upload complete")
                 self.status.set(f"Sent to {peer} as {received_name} in {self.folder if False else 'the receiving shared folder'}")
         self._bg(lambda: client.upload(ip, port, file_path, report), done)
