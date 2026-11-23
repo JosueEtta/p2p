@@ -1,4 +1,5 @@
 """Tkinter interface: peer list, search, and download."""
+import os
 import queue
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -20,6 +21,7 @@ class App:
     def __init__(self, root, discovery, folder):
         self.root, self.discovery, self.folder = root, discovery, folder
         self.q = queue.Queue()
+        self._refreshing = False
         root.title(f"P2P Share - {discovery.name}")
         root.geometry("760x500")
 
@@ -82,6 +84,7 @@ class App:
 
         root.after(100, self._poll)
         self.refresh()
+        root.after(60_000, self._auto_refresh)
 
     def _poll(self):
         while not self.q.empty():
@@ -105,14 +108,30 @@ class App:
         )
 
     def refresh(self):
+        if self._refreshing:
+            return
+        self._refreshing = True
         self.status.set("Scanning network for devices...")
         self._bg(self.discovery.refresh, self._show_peers)
 
+    def _auto_refresh(self):
+        self.refresh()
+        self.root.after(60_000, self._auto_refresh)
+
     def _show_peers(self, peers, err):
+        self._refreshing = False
+        if err:
+            self.status.set(f"Could not refresh devices: {err}")
+            return
+        selected = self.peer_list.curselection()
+        selected_name = self.peer_list.get(selected[0]) if selected else None
         self.peer_list.delete(0, "end")
         for name in sorted(peers):
             self.peer_list.insert("end", name)
-        self.status.set(f"{len(peers)} device(s) found")
+        if selected_name in peers:
+            index = sorted(peers).index(selected_name)
+            self.peer_list.selection_set(index)
+        self.status.set(f"{len(peers)} other device(s) found")
 
     def _fill(self, rows):
         self.tree.delete(*self.tree.get_children())
@@ -143,12 +162,27 @@ class App:
         term = self.search_var.get().strip().casefold()
         peers = broadcast.get_peers()
 
-        if not peers:
-            self._fill([])
-            self.status.set("No devices discovered. Click Refresh peers and try again.")
-            return
+        self.status.set(
+            f"Searching this device and {len(peers)} discovered device(s)..."
+        )
 
-        self.status.set(f"Searching {len(peers)} discovered device(s)...")
+        def search_local():
+            matches = []
+            try:
+                with os.scandir(self.folder) as entries:
+                    for entry in entries:
+                        if (
+                            entry.is_file()
+                            and not entry.name.endswith(".part")
+                            and not entry.name.startswith(".p2p-")
+                            and term in entry.name.casefold()
+                        ):
+                            matches.append(
+                                (entry.name, entry.stat().st_size, self.discovery.name)
+                            )
+            except OSError as exc:
+                raise RuntimeError(f"Could not search this device's folder: {exc}") from exc
+            return matches
 
         def search_peer(name, address):
             ip, port = address
@@ -161,10 +195,10 @@ class App:
             return matches
 
         def work():
-            rows = []
+            rows = search_local()
             failures = []
 
-            with ThreadPoolExecutor(max_workers=min(len(peers), 8)) as executor:
+            with ThreadPoolExecutor(max_workers=max(1, min(len(peers), 8))) as executor:
                 futures = {
                     executor.submit(search_peer, name, address): name
                     for name, address in peers.items()
@@ -197,7 +231,8 @@ class App:
                 )
             else:
                 self.status.set(
-                    f"{len(rows)} match(es) found across all {len(peers)} device(s)"
+                    f"{len(rows)} match(es) found on this device and "
+                    f"{len(peers)} other device(s)"
                 )
 
         self._bg(work, done)
@@ -208,6 +243,9 @@ class App:
             messagebox.showinfo("Download", "Select a file first.")
             return
         fname, _size, peer = self.tree.item(sel[0], "values")
+        if peer == self.discovery.name:
+            self.status.set("This file is already on your device.")
+            return
         device = broadcast.get_peers().get(peer)
         if not device:
             self.status.set("That device is no longer available. Refresh peers.")
