@@ -1,6 +1,7 @@
 """Tkinter interface: peer list, search, and download."""
 import queue
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -139,24 +140,66 @@ class App:
         self._bg(lambda: client.list_files(ip, port), done)
 
     def search(self):
-        term = self.search_var.get().strip().lower()
+        term = self.search_var.get().strip().casefold()
         peers = broadcast.get_peers()
-        self.status.set("Searching all devices...")
+
+        if not peers:
+            self._fill([])
+            self.status.set("No devices discovered. Click Refresh peers and try again.")
+            return
+
+        self.status.set(f"Searching {len(peers)} discovered device(s)...")
+
+        def search_peer(name, address):
+            ip, port = address
+            files = client.list_files(ip, port)
+            matches = [
+                (file["name"], file["size"], name)
+                for file in files
+                if term in file["name"].casefold()
+            ]
+            return matches
 
         def work():
             rows = []
-            for name, (ip, port) in peers.items():
-                try:
-                    for file in client.list_files(ip, port):
-                        if term in file["name"].lower():
-                            rows.append((file["name"], file["size"], name))
-                except OSError:
-                    pass
-            return rows
+            failures = []
 
-        def done(rows, err):
-            self._fill(rows or [])
-            self.status.set(f"{len(rows or [])} match(es) across {len(peers)} device(s)")
+            with ThreadPoolExecutor(max_workers=min(len(peers), 8)) as executor:
+                futures = {
+                    executor.submit(search_peer, name, address): name
+                    for name, address in peers.items()
+                }
+
+                for future in as_completed(futures):
+                    name = futures[future]
+                    try:
+                        rows.extend(future.result())
+                    except Exception as exc:
+                        failures.append((name, str(exc)))
+
+            rows.sort(key=lambda row: (row[0].casefold(), row[2].casefold()))
+            return rows, failures
+
+        def done(result, err):
+            if err:
+                self._fill([])
+                self.status.set(f"Search failed: {err}")
+                return
+
+            rows, failures = result
+            self._fill(rows)
+
+            if failures:
+                failed_names = ", ".join(name for name, _ in failures)
+                self.status.set(
+                    f"{len(rows)} match(es). Could not search {len(failures)} "
+                    f"device(s): {failed_names}"
+                )
+            else:
+                self.status.set(
+                    f"{len(rows)} match(es) found across all {len(peers)} device(s)"
+                )
+
         self._bg(work, done)
 
     def download(self):
