@@ -19,11 +19,10 @@ Windows: run setup_firewall.bat once as administrator, and set your Wi-Fi networ
 Devices found by a scan stay listed; scans retry 3 times, so one lost packet no longer hides a device.
 
 
-Uploading a file to another device:
-1. Start sharing on both devices and make sure they are on the same local network.
-2. On the sending device, select the receiving device in Available devices.
-3. Click Upload file and choose a file from your computer.
-4. The file is transferred directly to the receiving device's shared folder.
-5. If a file with the same name already exists, the receiver saves the incoming file with a numbered name instead of overwriting the existing file.
+File sharing features:
+- Discover other devices on the local network.
+- Browse and search files in connected devices' shared folders.
+- Download files directly from another device into your configured shared folder.
+- Monitor download progress in the green progress bar.
 
-The receiving device must be running P2P Share and its firewall must allow incoming TCP connections on the configured file-server port.
+The remote device must be running P2P Share and its firewall must allow incoming TCP connections on its configured file-server port.
