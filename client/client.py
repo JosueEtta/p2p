@@ -1,4 +1,4 @@
-"""Client: asks a peer for its file list or downloads a file from it."""
+"""Client operations for listing, downloading, and sending peer files."""
 import json
 import os
 import socket
@@ -37,11 +37,33 @@ def download(ip, port, name, dest_folder):
             raise RuntimeError(header["error"])
         size, got = header["size"], 0
         path = _unique_path(dest_folder, name)
-        with open(path, "wb") as f:
+        with open(path, "wb") as file:
             while got < size:
                 chunk = s.recv(min(CHUNK, size - got))
                 if not chunk:
                     raise ConnectionError("Connection lost")
-                f.write(chunk)
+                file.write(chunk)
                 got += len(chunk)
     return path
+
+
+def upload(ip, port, file_path):
+    name = os.path.basename(file_path)
+    size = os.path.getsize(file_path)
+
+    with _connect(ip, port) as s:
+        send_json(s, {"cmd": "SEND", "name": name, "size": size})
+        response = json.loads(recv_line(s))
+        if "error" in response:
+            raise RuntimeError(response["error"])
+        if not response.get("ready"):
+            raise RuntimeError("The receiving device is not ready")
+
+        with open(file_path, "rb") as file:
+            while chunk := file.read(CHUNK):
+                s.sendall(chunk)
+
+        result = json.loads(recv_line(s))
+        if "error" in result:
+            raise RuntimeError(result["error"])
+        return result.get("name", name)
