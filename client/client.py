@@ -1,4 +1,4 @@
-"""Client operations for listing, downloading, and sending peer files."""
+"""Client operations for listing and downloading peer files."""
 import json
 import os
 import socket
@@ -70,32 +70,3 @@ def download(ip, port, name, dest_folder, progress_callback=None):
         finally:
             if temp_path and os.path.exists(temp_path):
                 os.remove(temp_path)
-
-
-def upload(ip, port, file_path, progress_callback=None):
-    name = os.path.basename(file_path)
-    size = os.path.getsize(file_path)
-
-    with _connect(ip, port) as s:
-        send_json(s, {"cmd": "SEND", "name": name, "size": size})
-        response = json.loads(recv_line(s))
-        if "error" in response:
-            raise RuntimeError(response["error"])
-        if not response.get("ready"):
-            raise RuntimeError("The receiving device is not ready")
-
-        sent = 0
-        if progress_callback:
-            progress_callback(0, size)
-
-        with open(file_path, "rb") as file:
-            while chunk := file.read(CHUNK):
-                s.sendall(chunk)
-                sent += len(chunk)
-                if progress_callback:
-                    progress_callback(sent, size)
-
-        result = json.loads(recv_line(s))
-        if "error" in result:
-            raise RuntimeError(result["error"])
-        return result.get("name", name)
