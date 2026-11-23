@@ -1,5 +1,4 @@
-"""Tkinter interface: peer list, search, download, and upload."""
-import os
+"""Tkinter interface: peer list, search, and download."""
 import queue
 import threading
 import tkinter as tk
@@ -36,7 +35,6 @@ class App:
         self.peer_list = tk.Listbox(left, width=22, exportselection=False)
         self.peer_list.pack(fill="y", expand=True, padx=4, pady=4)
         self.peer_list.bind("<<ListboxSelect>>", self.browse_peer)
-        ttk.Button(left, text="Upload file", command=self.upload).pack(fill="x", padx=4, pady=(0, 4))
 
         right = ttk.Frame(body)
         right.pack(side="left", fill="both", expand=True, padx=(8, 0))
@@ -60,7 +58,22 @@ class App:
         transfer.pack(fill="x", padx=6, pady=(0, 6))
         self.progress_text = tk.StringVar(value="No active transfer")
         ttk.Label(transfer, textvariable=self.progress_text).pack(anchor="w")
-        self.progress = ttk.Progressbar(transfer, mode="determinate", maximum=100)
+        style = ttk.Style(root)
+        style.theme_use("clam")
+        style.configure(
+            "Green.Horizontal.TProgressbar",
+            troughcolor="#e5e7eb",
+            background="#16a34a",
+            bordercolor="#e5e7eb",
+            lightcolor="#16a34a",
+            darkcolor="#16a34a",
+        )
+        self.progress = ttk.Progressbar(
+            transfer,
+            mode="determinate",
+            maximum=100,
+            style="Green.Horizontal.TProgressbar",
+        )
         self.progress.pack(fill="x", pady=(4, 0))
 
         self.status = tk.StringVar(value="Starting...")
@@ -173,39 +186,3 @@ class App:
                 self.progress_text.set("Download complete")
                 self.status.set(f"Saved to {path}")
         self._bg(lambda: client.download(ip, port, fname, self.folder, report), done)
-
-    def upload(self):
-        sel = self.peer_list.curselection()
-        if not sel:
-            messagebox.showinfo("Upload", "Select a device to receive the file first.")
-            return
-
-        peer = self.peer_list.get(sel[0])
-        device = broadcast.get_peers().get(peer)
-        if not device:
-            self.status.set("That device is no longer available. Refresh peers.")
-            return
-
-        file_path = filedialog.askopenfilename(parent=self.root, title=f"Choose a file to send to {peer}")
-        if not file_path:
-            return
-
-        ip, port = device
-        file_name = os.path.basename(file_path)
-        total = os.path.getsize(file_path)
-        self.progress["value"] = 0
-        self.progress_text.set(f"Sending {file_name} to {peer}...")
-        self.status.set(f"Sending {file_name} to {peer}...")
-
-        def report(sent, size):
-            self.q.put(lambda sent=sent, size=size: self._set_progress(sent, size, "Sending"))
-
-        def done(received_name, err):
-            if err:
-                self.progress_text.set("Upload failed")
-                self.status.set(f"Upload failed: {err}")
-            else:
-                self.progress["value"] = 100
-                self.progress_text.set("Upload complete")
-                self.status.set(f"Sent to {peer} as {received_name} in {self.folder if False else 'the receiving shared folder'}")
-        self._bg(lambda: client.upload(ip, port, file_path, report), done)
