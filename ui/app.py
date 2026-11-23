@@ -1,8 +1,8 @@
-"""Tkinter interface: peer list, search across all peers, download."""
+"""Tkinter interface: peer list, search, download, and upload."""
 import queue
 import threading
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from client import broadcast, client
 
@@ -35,6 +35,7 @@ class App:
         self.peer_list = tk.Listbox(left, width=22, exportselection=False)
         self.peer_list.pack(fill="y", expand=True, padx=4, pady=4)
         self.peer_list.bind("<<ListboxSelect>>", self.browse_peer)
+        ttk.Button(left, text="Upload file", command=self.upload).pack(fill="x", padx=4, pady=(0, 4))
 
         right = ttk.Frame(body)
         right.pack(side="left", fill="both", expand=True, padx=(8, 0))
@@ -58,9 +59,8 @@ class App:
         ttk.Label(root, textvariable=self.status, relief="sunken", anchor="w").pack(fill="x")
 
         root.after(100, self._poll)
-        self.refresh()  # UDP discovery runs first, on startup
+        self.refresh()
 
-    # --- thread plumbing: workers push callables, the UI thread runs them
     def _poll(self):
         while not self.q.empty():
             self.q.get()()
@@ -75,7 +75,6 @@ class App:
                 self.q.put(lambda: done(None, e))
         threading.Thread(target=run, daemon=True).start()
 
-    # --- actions
     def refresh(self):
         self.status.set("Scanning network for devices...")
         self._bg(self.discovery.refresh, self._show_peers)
@@ -96,7 +95,11 @@ class App:
         if not sel:
             return
         name = self.peer_list.get(sel[0])
-        ip, port = broadcast.get_peers()[name]
+        peer = broadcast.get_peers().get(name)
+        if not peer:
+            self.status.set("That device is no longer available. Refresh peers.")
+            return
+        ip, port = peer
         self.status.set(f"Loading files from {name}...")
 
         def done(files, err):
@@ -116,9 +119,9 @@ class App:
             rows = []
             for name, (ip, port) in peers.items():
                 try:
-                    for f in client.list_files(ip, port):
-                        if term in f["name"].lower():
-                            rows.append((f["name"], f["size"], name))
+                    for file in client.list_files(ip, port):
+                        if term in file["name"].lower():
+                            rows.append((file["name"], file["size"], name))
                 except OSError:
                     pass
             return rows
@@ -134,9 +137,40 @@ class App:
             messagebox.showinfo("Download", "Select a file first.")
             return
         fname, _size, peer = self.tree.item(sel[0], "values")
-        ip, port = broadcast.get_peers()[peer]
+        device = broadcast.get_peers().get(peer)
+        if not device:
+            self.status.set("That device is no longer available. Refresh peers.")
+            return
+        ip, port = device
         self.status.set(f"Downloading {fname} from {peer}...")
 
         def done(path, err):
             self.status.set(f"Error: {err}" if err else f"Saved to {path}")
         self._bg(lambda: client.download(ip, port, fname, self.folder), done)
+
+    def upload(self):
+        sel = self.peer_list.curselection()
+        if not sel:
+            messagebox.showinfo("Upload", "Select a device to receive the file first.")
+            return
+
+        peer = self.peer_list.get(sel[0])
+        device = broadcast.get_peers().get(peer)
+        if not device:
+            self.status.set("That device is no longer available. Refresh peers.")
+            return
+
+        file_path = filedialog.askopenfilename(parent=self.root, title=f"Choose a file to send to {peer}")
+        if not file_path:
+            return
+
+        ip, port = device
+        file_name = os.path.basename(file_path)
+        self.status.set(f"Sending {file_name} to {peer}...")
+
+        def done(received_name, err):
+            if err:
+                self.status.set(f"Upload failed: {err}")
+            else:
+                self.status.set(f"Sent to {peer} as {received_name}")
+        self._bg(lambda: client.upload(ip, port, file_path), done)
