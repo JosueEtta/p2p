@@ -1,22 +1,12 @@
-"""TCP file server for listing, downloading, and receiving files."""
+"""TCP file server for listing and downloading shared files."""
 import json
 import os
 import socket
-import tempfile
 import threading
 
 from protocol import recv_line, send_json
 
 CHUNK = 64 * 1024
-
-
-def _unique_path(folder, name):
-    base, ext = os.path.splitext(name)
-    path, index = os.path.join(folder, name), 1
-    while os.path.exists(path):
-        path = os.path.join(folder, f"{base} ({index}){ext}")
-        index += 1
-    return path
 
 
 class FileServer(threading.Thread):
@@ -95,37 +85,6 @@ class FileServer(threading.Thread):
                 with open(path, "rb") as file:
                     while chunk := file.read(CHUNK):
                         conn.sendall(chunk)
-
-            elif command == "SEND":
-                raw_name = req.get("name", "")
-                name = os.path.basename(raw_name.replace("\\", "/"))
-                size = req.get("size")
-                if not name or name in (".", "..") or not isinstance(size, int) or isinstance(size, bool) or size < 0:
-                    send_json(conn, {"error": "Invalid file details"})
-                    return
-
-                send_json(conn, {"ready": True})
-                temp_path = None
-                try:
-                    with tempfile.NamedTemporaryFile(
-                        mode="wb", dir=self.folder, prefix=".p2p-", suffix=".part", delete=False
-                    ) as file:
-                        temp_path = file.name
-                        received = 0
-                        while received < size:
-                            chunk = conn.recv(min(CHUNK, size - received))
-                            if not chunk:
-                                raise ConnectionError("Connection lost during upload")
-                            file.write(chunk)
-                            received += len(chunk)
-
-                    destination = _unique_path(self.folder, name)
-                    os.replace(temp_path, destination)
-                    temp_path = None
-                    send_json(conn, {"success": True, "name": os.path.basename(destination)})
-                finally:
-                    if temp_path and os.path.exists(temp_path):
-                        os.remove(temp_path)
 
             else:
                 send_json(conn, {"error": "Unknown command"})
