@@ -1,4 +1,5 @@
 """Tkinter interface: peer list, search, download, and upload."""
+import os
 import queue
 import threading
 import tkinter as tk
