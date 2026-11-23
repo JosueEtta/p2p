@@ -2,6 +2,7 @@
 import json
 import os
 import socket
+import tempfile
 
 from protocol import recv_line, send_json
 
@@ -17,7 +18,10 @@ def _connect(ip, port):
 def list_files(ip, port):
     with _connect(ip, port) as s:
         send_json(s, {"cmd": "LIST"})
-        return json.loads(recv_line(s)).get("files", [])
+        response = json.loads(recv_line(s))
+        if "error" in response:
+            raise RuntimeError(response["error"])
+        return response.get("files", [])
 
 
 def _unique_path(folder, name):
@@ -29,25 +33,46 @@ def _unique_path(folder, name):
     return path
 
 
-def download(ip, port, name, dest_folder):
+def download(ip, port, name, dest_folder, progress_callback=None):
+    os.makedirs(dest_folder, exist_ok=True)
     with _connect(ip, port) as s:
         send_json(s, {"cmd": "GET", "name": name})
         header = json.loads(recv_line(s))
         if "error" in header:
             raise RuntimeError(header["error"])
-        size, got = header["size"], 0
-        path = _unique_path(dest_folder, name)
-        with open(path, "wb") as file:
-            while got < size:
-                chunk = s.recv(min(CHUNK, size - got))
-                if not chunk:
-                    raise ConnectionError("Connection lost")
-                file.write(chunk)
-                got += len(chunk)
-    return path
+
+        size = header.get("size")
+        if not isinstance(size, int) or size < 0:
+            raise RuntimeError("The peer returned an invalid file size")
+
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb", dir=dest_folder, prefix=".p2p-", suffix=".part", delete=False
+            ) as file:
+                temp_path = file.name
+                received = 0
+                if progress_callback:
+                    progress_callback(0, size)
+                while received < size:
+                    chunk = s.recv(min(CHUNK, size - received))
+                    if not chunk:
+                        raise ConnectionError("Connection lost during download")
+                    file.write(chunk)
+                    received += len(chunk)
+                    if progress_callback:
+                        progress_callback(received, size)
+
+            destination = _unique_path(dest_folder, os.path.basename(name))
+            os.replace(temp_path, destination)
+            temp_path = None
+            return destination
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
 
 
-def upload(ip, port, file_path):
+def upload(ip, port, file_path, progress_callback=None):
     name = os.path.basename(file_path)
     size = os.path.getsize(file_path)
 
@@ -59,9 +84,16 @@ def upload(ip, port, file_path):
         if not response.get("ready"):
             raise RuntimeError("The receiving device is not ready")
 
+        sent = 0
+        if progress_callback:
+            progress_callback(0, size)
+
         with open(file_path, "rb") as file:
             while chunk := file.read(CHUNK):
                 s.sendall(chunk)
+                sent += len(chunk)
+                if progress_callback:
+                    progress_callback(sent, size)
 
         result = json.loads(recv_line(s))
         if "error" in result:
