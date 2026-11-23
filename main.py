@@ -23,12 +23,14 @@ root = tk.Tk()
 
 
 def start_sharing(device_name, folder):
+    server = FileServer(folder, a.port)
     try:
-        server = FileServer(folder, a.port)
         server.start()
+        server.wait_until_ready()
         discovery = Discovery(device_name, a.port)
         discovery.start_listener()
-    except OSError as exc:
+    except (OSError, RuntimeError, TimeoutError) as exc:
+        server.stop()
         messagebox.showerror("Could not start sharing", str(exc), parent=root)
         return
 
