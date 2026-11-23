@@ -21,7 +21,7 @@ class App:
         self.root, self.discovery, self.folder = root, discovery, folder
         self.q = queue.Queue()
         root.title(f"P2P Share - {discovery.name}")
-        root.geometry("760x460")
+        root.geometry("760x500")
 
         top = ttk.Frame(root, padding=6)
         top.pack(fill="x")
@@ -56,6 +56,13 @@ class App:
         self.tree.pack(fill="both", expand=True, pady=6)
         ttk.Button(right, text="Download selected", command=self.download).pack(anchor="e")
 
+        transfer = ttk.LabelFrame(root, text="File transfer", padding=6)
+        transfer.pack(fill="x", padx=6, pady=(0, 6))
+        self.progress_text = tk.StringVar(value="No active transfer")
+        ttk.Label(transfer, textvariable=self.progress_text).pack(anchor="w")
+        self.progress = ttk.Progressbar(transfer, mode="determinate", maximum=100)
+        self.progress.pack(fill="x", pady=(4, 0))
+
         self.status = tk.StringVar(value="Starting...")
         ttk.Label(root, textvariable=self.status, relief="sunken", anchor="w").pack(fill="x")
 
@@ -75,6 +82,13 @@ class App:
             except Exception as e:
                 self.q.put(lambda error=e: done(None, error))
         threading.Thread(target=run, daemon=True).start()
+
+    def _set_progress(self, transferred, total, direction):
+        percent = 100 if total == 0 else transferred * 100 / total
+        self.progress["value"] = percent
+        self.progress_text.set(
+            f"{direction}: {fmt_size(transferred)} / {fmt_size(total)} ({percent:.1f}%)"
+        )
 
     def refresh(self):
         self.status.set("Scanning network for devices...")
@@ -143,11 +157,21 @@ class App:
             self.status.set("That device is no longer available. Refresh peers.")
             return
         ip, port = device
+        self.progress["value"] = 0
+        self.progress_text.set(f"Downloading {fname} from {peer}...")
         self.status.set(f"Downloading {fname} from {peer}...")
 
+        def report(received, total):
+            self.q.put(lambda received=received, total=total: self._set_progress(received, total, "Receiving"))
+
         def done(path, err):
-            self.status.set(f"Error: {err}" if err else f"Saved to {path}")
-        self._bg(lambda: client.download(ip, port, fname, self.folder), done)
+            if err:
+                self.progress_text.set("Download failed")
+                self.status.set(f"Download failed: {err}")
+            else:
+                self._set_progress(1, 1, "Download complete")
+                self.status.set(f"Saved to {path}")
+        self._bg(lambda: client.download(ip, port, fname, self.folder, report), done)
 
     def upload(self):
         sel = self.peer_list.curselection()
@@ -167,11 +191,19 @@ class App:
 
         ip, port = device
         file_name = os.path.basename(file_path)
+        total = os.path.getsize(file_path)
+        self.progress["value"] = 0
+        self.progress_text.set(f"Sending {file_name} to {peer}...")
         self.status.set(f"Sending {file_name} to {peer}...")
+
+        def report(sent, size):
+            self.q.put(lambda sent=sent, size=size: self._set_progress(sent, size, "Sending"))
 
         def done(received_name, err):
             if err:
+                self.progress_text.set("Upload failed")
                 self.status.set(f"Upload failed: {err}")
             else:
-                self.status.set(f"Sent to {peer} as {received_name}")
-        self._bg(lambda: client.upload(ip, port, file_path), done)
+                self._set_progress(total, total, "Upload complete")
+                self.status.set(f"Sent to {peer} as {received_name} in {self.folder if False else 'the receiving shared folder'}")
+        self._bg(lambda: client.upload(ip, port, file_path, report), done)
