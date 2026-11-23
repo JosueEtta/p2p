@@ -1,25 +1,44 @@
-"""Run one simulated computer:
-    python main.py --name PC1 --port 5001 --folder shared/PC1
-"""
+"""Start P2P Share with a device configuration screen."""
 import argparse
 import os
+import socket
 import tkinter as tk
+from tkinter import messagebox
 
 from client.broadcast import Discovery
 from server.server import FileServer
 from ui.app import App
+from ui.startup import StartupScreen
+
 
 p = argparse.ArgumentParser()
-p.add_argument("--name", required=True, help="unique device name")
+p.add_argument("--name", default=socket.gethostname(), help="initial device name")
 p.add_argument("--port", type=int, required=True, help="TCP file-server port")
-p.add_argument("--folder", required=True, help="folder this device shares")
+p.add_argument("--folder", default="shared", help="initial shared folder")
 a = p.parse_args()
 
 os.makedirs(a.folder, exist_ok=True)
-FileServer(a.folder, a.port).start()
-discovery = Discovery(a.name, a.port)
-discovery.start_listener()
 
 root = tk.Tk()
-App(root, discovery, a.folder)
+
+
+def start_sharing(device_name, folder):
+    server = FileServer(folder, a.port)
+    try:
+        server.start()
+        server.wait_until_ready()
+        discovery = Discovery(device_name, a.port)
+        discovery.start_listener()
+    except (OSError, RuntimeError, TimeoutError) as exc:
+        server.stop()
+        messagebox.showerror("Could not start sharing", str(exc), parent=root)
+        return
+
+    for widget in root.winfo_children():
+        widget.destroy()
+
+    App(root, discovery, folder)
+
+
+StartupScreen(root, start_sharing, initial_name=a.name, initial_folder=os.path.abspath(a.folder))
 root.mainloop()
