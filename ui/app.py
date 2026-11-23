@@ -73,7 +73,7 @@ class App:
                 result = work()
                 self.q.put(lambda: done(result, None))
             except Exception as e:
-                self.q.put(lambda: done(None, e))
+                self.q.put(lambda error=e: done(None, error))
         threading.Thread(target=run, daemon=True).start()
 
     def refresh(self):
